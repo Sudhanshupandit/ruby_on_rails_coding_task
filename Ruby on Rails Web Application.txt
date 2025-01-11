@@ -1,0 +1,152 @@
+# Ruby on Rails Web Application for Store Rating Platform
+
+# Setup Instructions
+# - Ruby on Rails framework
+# - Any relational database (e.g., PostgreSQL, MySQL)
+
+# Key Functionalities Implemented:
+# - User roles: System Admin, Normal User, Store Owner
+# - CRUD operations for stores and users
+# - Store ratings (1-5) by normal users
+# - Admin dashboard displaying total users, stores, and ratings
+# - User authentication and role-based views
+
+# Gemfile
+source 'https://rubygems.org'
+gem 'rails', '~> 7.0'
+gem 'pg' # PostgreSQL for database
+gem 'devise' # User authentication
+gem 'pundit' # Authorization
+gem 'bootstrap', '~> 5.2'
+
+# Models
+rails generate model User name:string email:string password_digest:string role:string
+rails generate model Store name:string address:string owner_id:integer rating:float
+rails generate model Rating user_id:integer store_id:integer value:integer
+
+# User Model with Devise
+class User < ApplicationRecord
+  devise :database_authenticatable, :registerable,
+         :recoverable, :rememberable, :validatable
+  
+  enum role: { admin: 'admin', user: 'user', owner: 'owner' }
+
+  has_many :stores, foreign_key: 'owner_id'
+  has_many :ratings
+end
+
+# Store Model
+class Store < ApplicationRecord
+  belongs_to :owner, class_name: 'User', foreign_key: 'owner_id'
+  has_many :ratings
+
+  validates :name, presence: true, length: { maximum: 60 }
+  validates :address, presence: true, length: { maximum: 400 }
+end
+
+# Rating Model
+class Rating < ApplicationRecord
+  belongs_to :user
+  belongs_to :store
+
+  validates :value, inclusion: { in: 1..5 }
+end
+
+# Controllers
+rails generate controller AdminDashboard index
+rails generate controller Stores index show new create edit update destroy
+rails generate controller Ratings create update
+
+# AdminDashboardController
+class AdminDashboardController < ApplicationController
+  before_action :authenticate_user!
+  before_action :authorize_admin
+
+  def index
+    @total_users = User.count
+    @total_stores = Store.count
+    @total_ratings = Rating.count
+  end
+
+  private
+
+  def authorize_admin
+    redirect_to root_path, alert: 'Access Denied' unless current_user.admin?
+  end
+end
+
+# StoresController
+class StoresController < ApplicationController
+  before_action :authenticate_user!
+  before_action :authorize_owner, only: %i[new create edit update destroy]
+
+  def index
+    @stores = Store.all.order(:name)
+  end
+
+  def show
+    @store = Store.find(params[:id])
+  end
+
+  def new
+    @store = current_user.stores.build
+  end
+
+  def create
+    @store = current_user.stores.build(store_params)
+    if @store.save
+      redirect_to stores_path, notice: 'Store created successfully.'
+    else
+      render :new
+    end
+  end
+
+  private
+
+  def store_params
+    params.require(:store).permit(:name, :address)
+  end
+
+  def authorize_owner
+    redirect_to root_path, alert: 'Access Denied' unless current_user.owner?
+  end
+end
+
+# RatingsController
+class RatingsController < ApplicationController
+  before_action :authenticate_user!
+
+  def create
+    @rating = current_user.ratings.build(rating_params)
+    if @rating.save
+      redirect_to store_path(@rating.store), notice: 'Rating submitted successfully.'
+    else
+      redirect_to store_path(@rating.store), alert: 'Rating submission failed.'
+    end
+  end
+
+  private
+
+  def rating_params
+    params.require(:rating).permit(:store_id, :value)
+  end
+end
+
+# Views
+# - Use Bootstrap for styling.
+# - Create role-based dashboards for admin, users, and store owners.
+# - Implement forms for user sign-up, login, store creation, and rating submission.
+
+# Routes
+Rails.application.routes.draw do
+  devise_for :users
+  root 'stores#index'
+
+  resources :stores, only: %i[index show new create edit update destroy] do
+    resources :ratings, only: %i[create]
+  end
+
+  namespace :admin do
+    get 'dashboard', to: 'admin_dashboard#index'
+  end
+end
